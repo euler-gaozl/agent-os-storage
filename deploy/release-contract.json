@@ -1,0 +1,13 @@
+{
+  "schema": "public",
+  "migration_owner": "storage",
+  "backward_compatible": true,
+  "contract": {
+    "http": "agentos-http-v0.6-notes-lifecycle",
+    "tools": [],
+    "engines": [],
+    "data": "storage-v0.6-independent"
+  },
+  "format": 1,
+  "role": "storage"
+}
