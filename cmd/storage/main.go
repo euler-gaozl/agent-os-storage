@@ -11,6 +11,9 @@ import (
 
 func main() {
 	servicehost.Main(servicehost.Options{Role: "storage", Port: "8092", Database: true, Concurrency: 4, Authorize: storage.Authorize, Readiness: storage.Readiness}, func(ctx context.Context, p *pgxpool.Pool, c servicehttp.Config) (http.Handler, func(context.Context) error, error) {
+		if err := applyLocalDefaults(); err != nil {
+			return nil, nil, err
+		}
 		return (&storage.Server{Store: &storage.Store{DB: p}, HTTP: c}).Handler(), nil, nil
 	})
 }

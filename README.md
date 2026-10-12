@@ -49,3 +49,10 @@ adoption, invisible-root denial, retention and corruption checks without any
 execution tables. DB tests explicitly skip without PostgreSQL. CI adds Linux
 race/build/Docker and Windows build checks. Live release and whole-platform
 recovery remain separately reported; a storage test is not an Agent recovery test.
+
+Legacy local configurations may omit the Runtime address: this service preserves
+the previous loopback default (127.0.0.1:8094) for its bounded heartbeat/client.
+Where used, Registry (8096) and ToolHub (8091) defaults are also owned by the
+service entrypoint. Explicit environment/config endpoints always take precedence.
+Configure these addresses explicitly for containers or multiple hosts. No config
+file or shared SDK role policy is rewritten by this compatibility behavior.
