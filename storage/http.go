@@ -43,6 +43,13 @@ func (s *Server) routes(m *http.ServeMux) {
 			return e
 		}
 		result, e := s.Store.ArtifactPage(r.Context(), in)
+		var rejected *artifactReadRejection
+		if errors.As(e, &rejected) {
+			// The authoritative service returns an explicit read result. Generic
+			// HTTP 404/416 pages must never be interpreted as this protocol.
+			servicehttp.JSONResponse(w, 200, map[string]any{"isError": true, "code": rejected.Code, "message": rejected.Message})
+			return nil
+		}
 		if e != nil {
 			return e
 		}

@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"github.com/euler-gaozl/agent-os-sdk/contracts"
 	"github.com/euler-gaozl/agent-os-sdk/servicehttp"
 	"github.com/jackc/pgx/v5"
@@ -68,6 +69,30 @@ func TestArtifactReceiptRetentionAndPageWithoutExecutionTables(t *testing.T) {
 	if _, err = store.ArtifactPage(ctx, ArtifactPageRequest{Hash: hash, Roots: []string{other}, AdoptRoot: other}); err == nil {
 		t.Fatal("unreferenced root read evidence")
 	}
+	var lastRead map[string]any
+	pageStatus := func(in ArtifactPageRequest) int {
+		request := httptest.NewRequest(http.MethodPost, "/v1/artifacts/page", bytes.NewReader(contracts.JSON(in)))
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		lastRead = nil
+		_ = json.Unmarshal(response.Body.Bytes(), &lastRead)
+		return response.Code
+	}
+	for _, in := range []ArtifactPageRequest{
+		{Hash: hash, Roots: []string{other}, AdoptRoot: other},
+		{Hash: strings.Repeat("d", 64), Roots: []string{other}, AdoptRoot: other},
+	} {
+		if code := pageStatus(in); code != http.StatusOK || lastRead["isError"] != true || lastRead["code"] != "artifact_unavailable" {
+			t.Fatal("missing and inaccessible artifacts must share a definite rejection", code)
+		}
+	}
+	if code := pageStatus(ArtifactPageRequest{Hash: hash, Roots: []string{root, other}, AdoptRoot: other, Offset: 100}); code != http.StatusOK || lastRead["isError"] != true || lastRead["code"] != "artifact_window_invalid" {
+		t.Fatal("invalid window was not a definite rejection", code)
+	}
+	if err = db.QueryRow(ctx, "SELECT count(*) FROM artifact_refs WHERE root=$1", other).Scan(&refs); err != nil || refs != 0 {
+		t.Fatal("rejected reads adopted evidence", refs, err)
+	}
 	if _, err = db.Exec(ctx, "UPDATE artifacts SET created_at=now()-interval '48 hours'"); err != nil {
 		t.Fatal(err)
 	}
@@ -83,5 +108,8 @@ func TestArtifactReceiptRetentionAndPageWithoutExecutionTables(t *testing.T) {
 	}
 	if _, _, err = store.Artifact(ctx, hash); err == nil {
 		t.Fatal("corrupt source accepted")
+	}
+	if code := pageStatus(input); code != http.StatusInternalServerError {
+		t.Fatal("corruption must not look like correctable model input", code)
 	}
 }

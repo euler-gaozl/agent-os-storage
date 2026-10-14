@@ -6,10 +6,18 @@ import (
 	"regexp"
 
 	. "github.com/euler-gaozl/agent-os-sdk/contracts"
+	"github.com/euler-gaozl/agent-os-sdk/servicehttp"
+	"github.com/jackc/pgx/v5"
 )
 
 var RunRoot = regexp.MustCompile(`^run:[a-f0-9]{32}$`)
 var ArtifactHash = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+// A read-domain rejection is distinct from HTTP routing/auth/transport failures.
+// Only these known checks may become replayable model feedback.
+type artifactReadRejection struct{ Code, Message string }
+
+func (e *artifactReadRejection) Error() string { return e.Message }
 
 // Roots are computed by Runtime from its execution hierarchy, never accepted
 // from a model or browser. Storage owns references but does not query runs.
@@ -45,14 +53,18 @@ func (s *Store) ArtifactPage(ctx context.Context, in ArtifactPageRequest) (map[s
 	e = tx.QueryRow(ctx, `SELECT a.body,a.media_type FROM artifacts a WHERE a.hash=$1 AND EXISTS(
 SELECT 1 FROM artifact_refs r WHERE r.hash=a.hash AND r.root=ANY($2)) FOR KEY SHARE OF a`, in.Hash, in.Roots).Scan(&body, &media)
 	if e != nil {
+		if errors.Is(e, pgx.ErrNoRows) {
+			// Missing and outside the visible roots deliberately look identical.
+			return nil, &artifactReadRejection{Code: "artifact_unavailable", Message: "No readable runtime artifact for this hash. raw_sha256 and original_hash identify source bytes, not artifact_read handles. Use document_read with the knowledge document id, or the bound Sources read_capture tool with its capture id."}
+		}
 		return nil, e
 	}
 	if Hash(body) != in.Hash {
-		return nil, errors.New("artifact hash mismatch")
+		return nil, &servicehttp.StatusError{Status: 500, Message: "artifact integrity check failed"}
 	}
 	chars := []rune(string(body))
 	if in.Offset > len(chars) {
-		return nil, errors.New("offset exceeds artifact length")
+		return nil, &artifactReadRejection{Code: "artifact_window_invalid", Message: "The offset is outside this runtime artifact. Read offset 0 first and follow next_offset; capture and document offsets are not artifact offsets."}
 	}
 	if in.Limit == 0 {
 		in.Limit = 1200
