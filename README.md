@@ -1,58 +1,32 @@
 # Agent OS Storage
 
-Independent immutable artifact and retention-reference service. Owns only
-`public.artifacts` and `public.artifact_refs`. Agent notes/documents, execution
-tables and their transactions belong to Runtime; none of that SQL is included
-in this repository or the shared SDK.
+独立的不可变产物与保留引用服务，只拥有 `public.artifacts`、`public.artifact_refs`。Agent 笔记、执行记录及其原子事务属于 Runtime，不在此服务或 SDK 中复制。
 
-Runtime/Worker submit content-addressed bytes (up to 4 MiB) with a run retention
-root. Artifact and reference commit atomically; a retry adds no duplicate effect.
-Runtime supplies authorized roots for Unicode pagination and atomic reference
-adoption. Reads verify the stored hash. Service identities restrict mutation,
-paging and administrative downloads; these are trusted internal APIs, not an
-end-user/tenant authorization system.
+## 数据行为
 
-The explicit admin GC endpoint only deletes artifacts older than 24 hours with
-no retention references. There is no periodic GC or automatic reference removal.
-Referenced originals, active recovery evidence and receipts are not deleted by
-this service. Expiry of a model context does not revoke retention references.
+Runtime/Worker 提交最大 4 MiB 的内容寻址字节与运行保留根。产物和引用原子提交，重复提交不产生重复效果；读取核验存储哈希，并支持按授权根进行 Unicode 分页和原子引用继承。内部服务身份限制写入、分页和管理下载，不等于终端用户/租户权限体系。
 
-## Build, migrate and run
+只有显式管理 GC 接口能删除超过 24 小时且完全没有引用的产物。**不定时自动 GC，也不自动移除引用**。模型上下文被压缩不会撤销原文、回执或恢复证据的保留引用。
 
-Go 1.27.2 / PostgreSQL 18. `scripts/Build.ps1` builds service/migrate/healthcheck
-from committed vendor with network module retrieval and go.work disabled.
-Linux: `go build -mod=vendor ./cmd/storage`. No sibling source or private token.
-The fixed SDK provenance is recorded in `source-provenance.json`.
+## 构建与部署
 
-Supply a non-owner application role and a protected config following
-`deploy/service.example.json`. Only two tables need DML rights and public schema
-USAGE; the service must not have DDL privileges. Run `bin/migrate --role <role>`
-using a separate `MIGRATION_DATABASE_URL`. DDL/grants are a bounded transaction;
-the migration does not import documents, rewrite service config or touch other
-domains. Normal `bin/storage --config <service.json>` does not migrate.
+需要 Go 1.27.2、PostgreSQL 18。
 
-HTTP defaults to 4 concurrent requests, DB pool to 3. Bind privately, use distinct
-tokens/peer hashes (including self), TLS/private-network controls and container
-resource limits. `/readyz` checks this schema; `/healthz` only checks liveness.
-No Runtime or Registry endpoint is required for this storage process to start.
+```powershell
+$env:GOWORK='off'; $env:GOPROXY='off'
+./scripts/Build.ps1
+go test -mod=vendor -count=1 ./...
+go vet -mod=vendor ./...
+```
 
-Retain its DB/config and old binary for independent compatible release/rollback.
-`deploy/release-contract.json` identifies compatibility; no destructive down
-migrations. Windows integration owns activation and selects a fixed owner commit.
+Linux 可用 `go build -mod=vendor ./cmd/storage`。固定 SDK 和 `vendor` 使构建不依赖相邻源码或私有令牌。按 [配置示例](deploy/service.example.json) 提供非所有者数据库账号、独立服务令牌和对端哈希（含自身），使用 `bin/storage --config <文件>` 启动。
 
-## Verification
+应用账号仅需两张表的 DML 和 public schema USAGE，不能有 DDL 权限。单独通过 `MIGRATION_DATABASE_URL` 执行 `bin/migrate --role <账号>`，在有界事务里完成本域 DDL/授权；不导入文档、不改其他域或服务配置，正常启动不迁移。
 
-Run `go test -mod=vendor -count=1 ./...` and `go vet -mod=vendor ./...`.
-With `TEST_DATABASE_URL`, isolated PostgreSQL fixtures verify repeated/failed
-migration, least privilege, authenticated save/retry, Unicode pages, reference
-adoption, invisible-root denial, retention and corruption checks without any
-execution tables. DB tests explicitly skip without PostgreSQL. CI adds Linux
-race/build/Docker and Windows build checks. Live release and whole-platform
-recovery remain separately reported; a storage test is not an Agent recovery test.
+HTTP 并发默认 4，连接池默认 3。服务不要求 Runtime/Registry 地址才能启动；兼容配置可保留 Runtime 回环心跳默认值，多机应明确设置地址。内部端口使用私网/TLS 和资源限制。`/readyz` 检查本域，`/healthz` 仅检查存活。
 
-Legacy local configurations may omit the Runtime address: this service preserves
-the previous loopback default (127.0.0.1:8094) for its bounded heartbeat/client.
-Where used, Registry (8096) and ToolHub (8091) defaults are also owned by the
-service entrypoint. Explicit environment/config endpoints always take precedence.
-Configure these addresses explicitly for containers or multiple hosts. No config
-file or shared SDK role policy is rewritten by this compatibility behavior.
+## 升级与验证
+
+保留数据库、配置与旧程序，按 [发布契约](deploy/release-contract.json) 独立升级/回滚，不执行破坏性反向迁移。Windows 集成平台固定服务提交并控制激活。
+
+设置 `TEST_DATABASE_URL` 后，隔离 PostgreSQL 测试覆盖迁移回滚、最小权限、保存重试、Unicode 分页、引用继承、不可见根拒绝、保留与损坏检查；未设置则明确跳过。Storage 测试不等于完整 Agent 恢复验收。Actions 日常关闭，[历史验证细节](docs/history/service-notes-20261014.en.md) 保留原始记录。
